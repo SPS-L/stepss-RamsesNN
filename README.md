@@ -18,7 +18,7 @@ RamsesNN enables the use of neural networks trained in PyTorch to replace or aug
 ### Related Projects
 
 - [roseNNa](https://github.com/comp-physics/roseNNa) - Fast neural network inference library for Fortran/C
-- [URAMSES](https://github.com/sps-l/uramses) - RAMSES power system simulator distribution
+- [URAMSES](https://github.com/SPS-L/stepss-uramses) - RAMSES power system simulator distribution
 
 ---
 
