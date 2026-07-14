@@ -1,0 +1,26 @@
+# Compiled RAMSES artefacts — NOT redistributable, obtain from stepss-uramses
+*.lib
+*.a
+*.mod
+*.so
+*.dll
+
+# Build output
+Release*/
+Debug*/
+x64/
+*.o
+*.obj
+*.exe
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/

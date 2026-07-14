@@ -314,9 +314,22 @@ torch.onnx.export(model, (inp, hidden),
 
 ## 📄 License
 
-This project follows the licensing terms of its dependencies:
-- roseNNa: MIT License
-- RAMSES: Academic Public License
+The code written for this project is released under the MIT License — see [LICENSE](LICENSE).
+
+The MIT grant covers **only** the code in this repository. It does not extend to
+its dependencies, which carry their own terms:
+
+- **roseNNa** — MIT License
+- **RAMSES / URAMSES** — Academic Public License (non-commercial). RAMSES is the
+  property of the University of Liège.
+
+### Obtaining RAMSES
+
+The compiled RAMSES library (`libramses.lib` / `libramses.a`) and its Fortran
+module files are **not** included in this repository: they are proprietary and
+not redistributable under MIT. To build the URAMSES models here, get them from
+[stepss-uramses](https://github.com/SPS-L/stepss-uramses) and place them in
+`URAMSES/modules/` (Windows/Intel) or `URAMSES/modules_lin/` (Linux/gfortran).
 
 ---
 
