@@ -1,28 +1,58 @@
 # RamsesNN
 
-**Embedding Neural Networks into Dynamic Power System Simulators**
+**Embedding neural networks into dynamic power system simulators**
 
-This repository contains the implementation and workflow for integrating Physics-Informed Neural Networks (PINNs) into the RAMSES power system simulator using the [roseNNa](https://github.com/comp-physics/roseNNa) inference library.
-
-## 📋 Overview
-
-RamsesNN enables the use of neural networks trained in PyTorch to replace or augment traditional power system component models in RAMSES simulations. The workflow converts PyTorch models to ONNX format, processes them with roseNNa, and integrates them into RAMSES through custom Fortran injector models.
-
-### Key Features
-
-- **Fast Inference**: Uses roseNNa's optimized Fortran implementation (2-5x faster than PyTorch for small networks)
-- **Minimal Intrusion**: Seamlessly integrates into existing RAMSES workflows
-- **Flexible Models**: Supports both full and reduced-order power system models
-- **ONNX Standard**: Universal format compatible with PyTorch, TensorFlow, and Keras
-
-### Related Projects
-
-- [roseNNa](https://github.com/comp-physics/roseNNa) - Fast neural network inference library for Fortran/C
-- [URAMSES](https://github.com/SPS-L/stepss-uramses) - RAMSES power system simulator distribution
+RamsesNN integrates Physics-Informed Neural Networks (PINNs) into the RAMSES time-domain simulator, part of the [STEPSS](https://stepss.sps-lab.org/) power system simulation platform. Neural networks trained in PyTorch are exported to ONNX, converted to native Fortran with the [roseNNa](https://github.com/comp-physics/roseNNa) inference library, and embedded in RAMSES as custom injector models — replacing or augmenting traditional power system component models.
 
 ---
 
-## 🚀 Complete Workflow
+## Features
+
+- **PyTorch-to-Fortran pipeline** — train in PyTorch, export to ONNX, run natively inside the Fortran simulator via roseNNa
+- **Fast inference** — roseNNa's optimized Fortran implementation is 2–5x faster than PyTorch for the small networks typical of physics applications
+- **Minimal intrusion** — the network plugs into RAMSES as a standard user injector model (Norton equivalent), with no changes to the simulator core
+- **Full and reduced-order models** — example synchronous machine PINNs with 10-input/9-output (full) and 8-input/7-output (reduced) variants
+- **Multiple named models** — the roseNNa reader shipped here is modified so `initialize_nnx(model_name)` loads `onnxModel_<name>.txt` / `onnxWeights_<name>.txt`, allowing several networks side by side
+- **Standalone test harness** — `Evaluate_PINN/` evaluates the PINN + roseNNa inference outside the simulator
+- **ONNX standard** — universal format compatible with PyTorch, TensorFlow, and Keras
+
+---
+
+## Installation
+
+**Requirements:** Python 3.10 with `numpy<2`, `onnx`, `onnxruntime`, CPU `torch`, and `fypp` (for ONNX-to-Fortran conversion); Visual Studio with Intel Fortran (oneAPI) to build the included `URAMSES` and `Evaluate_PINN` solutions on Windows; the RAMSES library and module files from [stepss-uramses](https://github.com/SPS-L/stepss-uramses) (proprietary, not included — see [License](#license)).
+
+```bash
+git clone https://github.com/SPS-L/stepss-RamsesNN.git
+```
+
+Create the Python environment used by the conversion pipeline:
+
+```bash
+conda create -n roparse python=3.10 -y
+conda activate roparse
+
+pip install "numpy<2" onnx==1.15.0 onnxruntime==1.16.3
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install fypp
+```
+
+A full copy of roseNNa is vendored at `Evaluate_PINN/roseNNa-master/`; you can use it directly or a separate [roseNNa](https://github.com/comp-physics/roseNNa) checkout.
+
+---
+
+## Quick Start
+
+1. **Train and export** your network in PyTorch to ONNX (`torch.onnx.export`)
+2. **Convert** the ONNX model to Fortran with roseNNa (`modelParserONNX.py` + `fypp`) — see the [workflow](#complete-workflow) below
+3. **Drop the generated files** into the RAMSES project: `modelCreator.f90` alongside the roseNNa sources in `URAMSES/rosenna/`, and `onnxModel_<name>.txt` / `onnxWeights_<name>.txt` next to the RAMSES executable
+4. **Build** the `URAMSES` solution and run the simulation; the `inj_norton` injector model performs the neural network forward pass at every step
+
+A ready-made reduced-order machine model is included: `URAMSES/rosenna/` ships `modelCreator.f90`, `onnxModel_redv2.txt`, `onnxWeights_redv2.txt`, and the source `PINN_redv2.onnx`. The full-model files (`full_frzd`) must be generated from your own trained network.
+
+---
+
+## Complete Workflow
 
 ### 1. Train and Export Neural Network
 
@@ -42,26 +72,23 @@ torch.onnx.export(model, init_cond, "NN.onnx")
 
 ### 2. Convert ONNX Model with roseNNa
 
-Navigate to the `fLibrary/` directory in your roseNNa installation and follow these steps:
-
-#### Prerequisites
-
-Install required dependencies:
-
-```bash
-# Create conda environment for ONNX parsing
-conda create -n roparse python=3.10 -y
-conda activate roparse
-
-# Install dependencies
-pip install "numpy<2" onnx==1.15.0 onnxruntime==1.16.3
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install fypp
-```
+Work in roseNNa's `fLibrary/` directory (e.g. `Evaluate_PINN/roseNNa-master/fLibrary/`), with the `roparse` environment active.
 
 #### Shape Inference
 
 ONNX models need shape inference for proper parsing. Create and run a helper script:
+
+**Bash (Linux/Mac):**
+```bash
+cat > infer_shapes.py << 'EOF'
+import onnx, onnx.shape_inference
+m = onnx.load('./NN.onnx')
+m_inf = onnx.shape_inference.infer_shapes(m)
+onnx.save(m_inf, './NN_inferred.onnx')
+print('Wrote NN_inferred.onnx')
+EOF
+python infer_shapes.py
+```
 
 **PowerShell (Windows):**
 ```powershell
@@ -74,18 +101,6 @@ print('Wrote NN_inferred.onnx')
 "@
 Set-Content -Encoding ASCII infer_shapes.py $code
 python .\infer_shapes.py
-```
-
-**Bash (Linux/Mac):**
-```bash
-cat > infer_shapes.py << 'EOF'
-import onnx, onnx.shape_inference
-m = onnx.load('./NN.onnx')
-m_inf = onnx.shape_inference.infer_shapes(m)
-onnx.save(m_inf, './NN_inferred.onnx')
-print('Wrote NN_inferred.onnx')
-EOF
-python infer_shapes.py
 ```
 
 #### Parse and Generate Fortran Code
@@ -119,11 +134,11 @@ This generates `libcorelib.a`, the core roseNNa library file.
 
 ---
 
-## 🔧 Integration into RAMSES
+## Integration into RAMSES
 
 ### Required roseNNa Files
 
-Add these files from roseNNa's `fLibrary/` directory to your RAMSES project (URAMSES):
+These roseNNa source files must be part of the RAMSES user-model project. They are already included in `URAMSES/rosenna/`:
 
 - `activation_funcs.f90`
 - `derived_types.f90`
@@ -131,19 +146,20 @@ Add these files from roseNNa's `fLibrary/` directory to your RAMSES project (URA
 - `reader.f90`
 - `rosenna.f90`
 - `modelCreator.f90` (generated for your specific model)
+- `aux_functions.f90` (RamsesNN helper routines: Park transforms, machine solver, infinite-bus equations)
 
 ### Required Data Files
 
-Place these generated files in your RAMSES executable directory:
+Place the generated model files in the RAMSES executable directory:
 
-- `onnxModel.txt` - Model structure
-- `onnxWeights.txt` - Model weights
+- `onnxModel_<name>.txt` — model structure
+- `onnxWeights_<name>.txt` — model weights
 
-**Note**: If using multiple neural networks simultaneously, you'll need to modify the reader logic in `rosenna.f90` to handle multiple model files.
+**Note**: The `reader.f90` in this repository is modified relative to upstream roseNNa: `initialize_nnx(model_name)` takes a model name and loads the matching `onnxModel_<name>.txt` / `onnxWeights_<name>.txt` pair, so multiple networks can coexist.
 
 ### Example: Norton Injector Model
 
-The `inj_norton.f90` model demonstrates a complete integration. Key components:
+`URAMSES/my_models/inj_norton.f90` demonstrates a complete integration. Key components:
 
 #### Module Setup
 
@@ -153,7 +169,7 @@ module inj_norton_mod
     use MODELING
     use rosenna      ! Neural network library
     implicit none
-    
+
     ! Neural network I/O arrays
     real(real64), allocatable :: pinn_input(:,:)    ! (1, n_in)
     real(real64), allocatable :: pinn_output(:,:)   ! (1, n_out)
@@ -171,17 +187,15 @@ case (initialize)
         n_nn_input = 8
         n_nn_output = 7
     end if
-    
+
     ! Allocate arrays
     allocate(pinn_input(1, n_nn_input))
     allocate(pinn_output(1, n_nn_output))
-    
+
     ! Initialize input with steady-state values
     pinn_input(1,1) = 0.01_real64      ! timestep
-    pinn_input(1,2) = -0.81854824_real64  ! delta
-    pinn_input(1,3) = omega            ! omega
     ! ... additional states ...
-    
+
     ! Initialize roseNNa with model name
     nn_model_name = "full_frzd"  ! or "redv2" for reduced model
     call initialize_nnx(nn_model_name)
@@ -194,16 +208,16 @@ case (evaluate_eqs)
     ! Update inputs based on current system state
     call inf_bus_equations(vx, vy, old_ix, old_iy, Xline, Rline, &
                           new_v_infty, new_v_infty_ang)
-    
+
     pinn_input(1,8) = new_v_infty
     pinn_input(1,9) = new_v_infty_ang
-    
+
     ! Neural network forward pass
     call use_model(pinn_input, pinn_output)
-    
+
     ! Convert NN output to physical quantities
     call machine_solver(pinn_output(1,1:9), machine_output(1,1:6))
-    
+
     ! Transform to xy coordinates
     call park_transform_dq_xy(machine_output(1,3), machine_output(1,4), &
                              pinn_output(1,1), ixnorton, iynorton)
@@ -211,13 +225,13 @@ case (evaluate_eqs)
 
 ---
 
-## 🖥️ Platform-Specific Instructions
+## Platform-Specific Instructions
 
 ### Windows with Visual Studio 2022
 
 1. **Add source files** to your project:
    - Right-click project → Add → Existing Item
-   - Select the 6 roseNNa `.f90` files listed above
+   - Select the roseNNa `.f90` files listed above
 
 2. **Configure module path**:
    - Project → Properties → Fortran → General → Additional Include Directories
@@ -227,22 +241,27 @@ case (evaluate_eqs)
    - Project → Properties → Linker → Input → Additional Dependencies
    - Add path to `libcorelib.a`
 
+See `URAMSES/README.rst` for the general procedure to build user models against RAMSES with Visual Studio and Intel Fortran.
+
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
 ```
 RamsesNN/
-├── README.md                      # This file
-├── URAMSES/                       # RAMSES simulator files
-│   └── my_models/
-│       └── inj_norton.f90        # Example NN-integrated injector model
-└── [additional model files]
+├── Evaluate_PINN/                 # Standalone Fortran console app: test PINN inference outside RAMSES
+│   └── roseNNa-master/            # Vendored copy of the roseNNa library (MIT)
+├── URAMSES/                       # RAMSES user-model solution (Visual Studio / Intel Fortran)
+│   ├── src/                       # Model registration files (usr_inj_models.f90, ...)
+│   ├── my_models/                 # User models, incl. inj_norton.f90 (NN-driven Norton injector)
+│   └── rosenna/                   # roseNNa sources + generated model code and weights (redv2)
+├── LICENSE
+└── README.md
 ```
 
 ---
 
-## 🔬 Model Types Supported
+## Model Types Supported
 
 ### Full Model (10 inputs, 9 outputs)
 - Inputs: timestep, δ, ω, e_d, e_q, ψ_d, ψ_q, V_∞, θ_∞, v_f
@@ -254,7 +273,7 @@ RamsesNN/
 
 ---
 
-## 📚 Technical Details
+## Technical Details
 
 ### Neural Network Architecture Support
 
@@ -266,7 +285,7 @@ roseNNa currently supports:
 ### Performance
 
 For small networks typical in physics applications:
-- **2-5x faster** than PyTorch inference
+- **2–5x faster** than PyTorch inference
 - Optimized for Fortran/C HPC environments
 - Minimal memory footprint
 
@@ -296,25 +315,28 @@ torch.onnx.export(model, (inp, hidden),
 
 ---
 
-## 📖 References
+## References
 
-- B. Gelford (2025). "Integrating neural networks into dynamic power system simulators", MSc Thesis, ETH Zurich.
+- B. Gelfort (2025). "Integrating neural networks into dynamic power system simulators", MSc Thesis, ETH Zurich.
 - A. Bati, S. H. Bryngelson (2024). "RoseNNa: A performant, portable library for neural network inference with application to computational fluid dynamics". *Computer Physics Communications*. [DOI: 10.1016/j.cpc.2023.109052](https://doi.org/10.1016/j.cpc.2023.109052)
 - P. Aristidou, S. Lebeau, and T. Van Cutsem (2016). "Power system dynamic simulations using a parallel two-level schur-complement decomposition". *IEEE Transactions on Power Systems*. [doi: 10.1109/TPWRS.2015.2509023](https://doi.org/10.1109/TPWRS.2015.2509023)
 
 ---
 
-## 📧 Contact
+## Documentation
 
-**Author:** Bruno Gelfort
-**Web:** [https://sps-lab.org](https://sps-lab.org)  
-**Email:** info@sps-lab.org
+| Document | Description |
+|----------|-------------|
+| [STEPSS platform](https://stepss.sps-lab.org/) | Documentation site for the STEPSS simulation platform |
+| [PyRAMSES](https://stepss.sps-lab.org/pyramses/) | Using the compiled RAMSES library from Python |
+| [URAMSES/README.rst](URAMSES/README.rst) | Building user models with Visual Studio and Intel Fortran |
+| [roseNNa](https://github.com/comp-physics/roseNNa) | Upstream neural network inference library for Fortran/C |
 
 ---
 
-## 📄 License
+## License
 
-The code written for this project is released under the MIT License — see [LICENSE](LICENSE).
+RamsesNN is distributed under the **MIT License** — see [LICENSE](LICENSE). Copyright (c) 2025 Bruno Gelfort.
 
 The MIT grant covers **only** the code in this repository. It does not extend to
 its dependencies, which carry their own terms:
@@ -333,11 +355,8 @@ not redistributable under MIT. To build the URAMSES models here, get them from
 
 ---
 
-## 🚧 Future Work
+## Authors
 
-Planned additions to this repository:
-- Complete PINN training pipeline documentation
-- Additional example models for various power system components
-- Automated testing framework
-- Performance benchmarking tools
-- Multi-model integration examples
+RamsesNN was originally developed by **Bruno Gelfort** (MSc thesis, ETH Zurich, 2025). It is maintained by the [Sustainable Power Systems Laboratory (SPS-L)](https://sps-lab.org/) at the Cyprus University of Technology, under the direction of Dr. Petros Aristidou.
+
+**Contact:** info@sps-lab.org — [https://sps-lab.org](https://sps-lab.org)
